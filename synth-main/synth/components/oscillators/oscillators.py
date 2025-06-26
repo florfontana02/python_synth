@@ -72,3 +72,55 @@ class TriangleOscillator(SawtoothOscillator):
         if self._wave_range is not (-1, 1):
             val = self.squish_val(val, *self._wave_range)
         return val * self._a
+
+
+
+class WavetableOscillator(Oscillator):
+    """
+    Oscillator that reads a pre-grabada wavetable (un ciclo de onda) a velocidad
+    variable según la frecuencia deseada, con interpolación lineal para índices
+    no enteros.
+    """
+
+    def __init__(self, wavetable, freq=440, phase=0, amp=1,
+                 sample_rate=44100, wave_range=(-1, 1)):
+        # wavetable: array-like de floats en [-1,1]
+        super().__init__(freq=freq, phase=phase, amp=amp,
+                         sample_rate=sample_rate, wave_range=wave_range)
+        self.wavetable = np.asarray(wavetable, dtype=float)
+
+    def _post_freq_set(self):
+        # Calcula cuántos índices de tabla avanzamos por cada muestra
+        self._N    = len(self.wavetable)
+        self._step = (self.freq * self._N) / self._sample_rate
+
+    def _post_phase_set(self):
+        # phase en grados → posición inicial en muestras
+        self._pos = (self.phase / 360) * self._N
+
+    def _initialize_osc(self):
+        # Asegura que pos esté inicializada
+        try:
+            _ = self._pos
+        except AttributeError:
+            # Si no vino de post_phase_set
+            self._pos = 0.0
+
+    def __next__(self):
+        # Índices entero y siguiente, con wrap
+        i0   = int(self._pos) % self._N
+        i1   = (i0 + 1) % self._N
+        frac = self._pos - int(self._pos)
+        # Interpolación lineal
+        v0 = self.wavetable[i0]
+        v1 = self.wavetable[i1]
+        val = (1 - frac) * v0 + frac * v1
+
+        # Avanzar posición
+        self._pos = (self._pos + self._step) % self._N
+
+        # Aplicar rango y amplitud
+        if self._wave_range != (-1, 1):
+            val = self.squish_val(val, *self._wave_range)
+        return val * self.amp
+
