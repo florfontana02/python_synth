@@ -5,7 +5,9 @@ import pyaudio
 from math import pi, sin
 from itertools import count
 from synth.components.envelopes import ADSREnvelope
-from synth.components.oscillators.oscillators import SineOscillator, SawtoothOscillator, SquareOscillator,TriangleOscillator
+from synth.components.oscillators import WavetableOscillator,SineOscillator
+from synth.components.tables import SineTable,SawtoothTable,SquareTable,TriangleTable
+from synth.player import PolySynth
 
 # 1) Abrir MIDI
 port_name = "Launchkey Mini MK4 37 MIDI 0"
@@ -24,6 +26,9 @@ voices = {}
 def midi_to_freq(m):
     return 440.0 * 2 ** ((m - 69) / 12.0)
 
+table = SineTable(1024)
+
+
 print("Arrancando main.py — Ctrl+C para salir")
 try:
     while True:
@@ -31,7 +36,7 @@ try:
         for msg in inport.iter_pending():
             if msg.type == 'note_on' and msg.velocity > 0:
                 freq = midi_to_freq(msg.note)
-                osc = iter(SquareOscillator(freq=freq, sample_rate=SR))
+                osc = iter(WavetableOscillator(wavetable = table, freq=freq, sample_rate=SR))
                 env = iter(ADSREnvelope(0.01, 0.1, 0.7, 0.3, sample_rate=SR))
                 voices[msg.note] = {'osc': osc, 'env': env}
             elif msg.type in ('note_off',) or (msg.type=='note_on' and msg.velocity==0):

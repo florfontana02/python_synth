@@ -6,3 +6,4 @@ from .composers import Chain, WaveAdder
 from .modifiers import Volume, ModulatedVolume
 from .modifiers import Panner, ModulatedPanner
 from .modifiers import Clipper
+from .tables import SineTable, SquareTable, SawtoothTable, TriangleTable

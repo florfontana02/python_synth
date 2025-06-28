@@ -1,88 +1,124 @@
-import pyaudio
+import time
 import numpy as np
-from pygame import midi
-
+import mido
+import pyaudio
 
 class PolySynth:
-    def __init__(self, amp_scale=0.3, max_amp=0.8, sample_rate=44100, num_samples=64):
-        # Initialize MIDI
-        midi.init()
-        if midi.get_count() > 0:
-            self.midi_input = midi.Input(midi.get_default_input_id())
-        else:
-            raise Exception("no midi devices detected")
+    def __init__(
+        self,
+        port_name: str = "Launchkey Mini MK4 37 MIDI 0",
+        amp_scale: float = 1.0,
+        max_amp: float = 1.0,
+        sample_rate: int = 44100,
+        num_samples: int = 64
+    ):
+        # 1) Abrir puerto MIDI con Mido
+        available = mido.get_input_names()
+        if port_name not in available:
+            raise Exception(f"MIDI port «{port_name}» no encontrado. Disponible:\n{available}")
+        self.inport = mido.open_input(port_name)
 
-        # Constants
+        # 2) Parámetros audio
         self.num_samples = num_samples
         self.sample_rate = sample_rate
-        self.amp_scale = amp_scale
-        self.max_amp = max_amp
+        self.amp_scale   = amp_scale
+        self.max_amp     = max_amp
 
-    def _init_stream(self, nchannels):
-        # Initialize the Stream object
+    def _init_stream(self, nchannels: int):
         self.stream = pyaudio.PyAudio().open(
             rate=self.sample_rate,
             channels=nchannels,
             format=pyaudio.paInt16,
             output=True,
             frames_per_buffer=self.num_samples,
+            output_device_index=4 #indice de salida
         )
 
     def _get_samples(self, notes_dict):
-        # Return samples in int16 format
-        samples = []
+        """
+        notes_dict: {note: [osc_generator, released_flag]}
+        Devuelve un array (num_samples, nchannels) en int16
+        """
+        # 1) Para cada muestra, sumar osciladores activos
+        out = []
         for _ in range(self.num_samples):
-            samples.append([next(osc[0]) for _, osc in notes_dict.items()])
-        samples = np.array(samples).sum(axis=1) * self.amp_scale
-        samples = np.int16(samples.clip(-self.max_amp, self.max_amp) * 32767)
-        return samples.reshape(self.num_samples, -1)
+            vals = [next(o[0]) for o in notes_dict.values()]
+            out.append(sum(vals) * self.amp_scale)
 
-    def play(self, osc_function, close=False):
-        tempcf = osc_function(1, 1, self.sample_rate)
-        has_trigger = hasattr(tempcf, "trigger_release")
-        tempsm = self._get_samples({-1: [tempcf, False]})
-        nchannels = tempsm.shape[1]
+        arr = np.array(out)
+        # 2) Clip y escala a int16
+        arr = np.clip(arr, -self.max_amp, self.max_amp)
+        arr = (arr * 32767).astype(np.int16)
+        # 3) Mono → (num_samples, 1)
+        return arr.reshape(self.num_samples, 1)
+
+    @staticmethod
+    def midi_to_freq(note: int) -> float:
+        """Convierte nota MIDI a frecuencia en Hz."""
+        return 440.0 * (2 ** ((note - 69) / 12.0))
+
+    def play(self, osc_function, close: bool = False):
+        """
+        osc_function(freq: float, amp: float, sample_rate: int) -> Oscillator instance
+        """
+        # 1) Construir un oscilador de prueba y convertirlo en iterator
+        raw_test = osc_function(
+            freq=440.0,
+            amp=1.0,
+            sample_rate=self.sample_rate
+        )
+        test = iter(raw_test)                    # ← aquí: inicializa _i, _p, _step…
+        has_trigger = hasattr(raw_test, "trigger_release")
+
+        # 2) Determinar canales usando la función _get_samples
+        samples = self._get_samples({-1: [test, False]})
+        nchannels = samples.shape[1]
         self._init_stream(nchannels)
 
         try:
             notes_dict = {}
+            print("PolySynth corriendo… Ctrl+C para salir")
             while True:
+                # A) Generar audio si hay voces
                 if notes_dict:
-                    # Play the notes
-                    samples = self._get_samples(notes_dict)
-                    self.stream.write(samples.tobytes())
+                    out = self._get_samples(notes_dict)
+                    self.stream.write(out.tobytes())
 
-                if self.midi_input.poll():
-                    # Add or remove notes from notes_dict
-                    for event in self.midi_input.read(num_events=16):
-                        (status, note, vel, _), _ = event
-                        if status == 0x80 and note in notes_dict:
+                # B) Leer mensajes MIDI pendientes
+                for msg in self.inport.iter_pending():
+                    if msg.type == 'note_on' and msg.velocity > 0:
+                        freq = self.midi_to_freq(msg.note)
+                        raw_osc = osc_function(
+                            freq=freq,
+                            amp=msg.velocity / 127.0,
+                            sample_rate=self.sample_rate
+                        )
+                        osc = iter(raw_osc)          # ← inicializar el oscilador
+                        notes_dict[msg.note] = [osc, False]
+
+                    elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
+                        if msg.note in notes_dict:
                             if has_trigger:
-                                notes_dict[note][0].trigger_release()
-                                notes_dict[note][1] = True
+                                raw_osc = notes_dict[msg.note][0]
+                                raw_osc.trigger_release()
+                                notes_dict[msg.note][1] = True
                             else:
-                                del notes_dict[note]
+                                del notes_dict[msg.note]
 
-                        elif status == 0x90:
-                            freq = midi.midi_to_frequency(note)
-                            notes_dict[note] = [
-                                osc_function(
-                                    freq=freq,
-                                    amp=vel / 127,
-                                    sample_rate=self.sample_rate,
-                                ),
-                                False,
-                            ]
-
+                # C) Limpiar voces que terminaron release
                 if has_trigger:
-                    # Delete notes if ended
-                    ended_notes = [
-                        k for k, o in notes_dict.items() if o[0].ended and o[1]
+                    ended = [
+                        n for n, (osc, released) in notes_dict.items()
+                        if getattr(osc, "ended", False) and released
                     ]
-                    for note in ended_notes:
-                        del notes_dict[note]
+                    for n in ended:
+                        del notes_dict[n]
 
-        except KeyboardInterrupt as err:
+                # D) Evitar 100% CPU
+                time.sleep(self.num_samples / self.sample_rate)
+
+        except KeyboardInterrupt:
+            print("Deteniendo PolySynth...")
             self.stream.close()
             if close:
-                self.midi_input.close()
+                self.inport.close()
