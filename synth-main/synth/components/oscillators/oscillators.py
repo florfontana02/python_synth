@@ -75,13 +75,7 @@ class TriangleOscillator(SawtoothOscillator):
         return val * self._a
 
 
-
 class WavetableOscillator(Oscillator):
-    """
-    Oscillator that reads a pre-grabada wavetable (un ciclo de onda) a velocidad
-    variable según la frecuencia deseada, con interpolación lineal para índices
-    no enteros.
-    """
 
     def __init__(self, wavetable, freq=440, phase=0, amp=1,
                  sample_rate=44100, wave_range=(-1, 1)):
@@ -91,7 +85,7 @@ class WavetableOscillator(Oscillator):
         self.wavetable = np.asarray(wavetable, dtype=float)
 
     def _post_freq_set(self):
-        # Calcula cuántos índices de tabla avanzamos por cada muestra
+        # calcula cuántos índices de tabla avanzamos por cada muestra
         self._N    = len(self.wavetable)
         self._step = (self.freq * self._N) / self._sample_rate
 
@@ -100,11 +94,11 @@ class WavetableOscillator(Oscillator):
         self._pos = (self.phase / 360) * self._N
 
     def _initialize_osc(self):
-        # Asegura que pos esté inicializada
+        # asegura que pos esté inicializada
         try:
             _ = self._pos
         except AttributeError:
-            # Si no vino de post_phase_set
+            # si no vino de post_phase_set
             self._pos = 0.0
 
     def __next__(self):

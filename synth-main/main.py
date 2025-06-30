@@ -1,56 +1,112 @@
-import time
-import numpy as np
-import mido
-import pyaudio
-from math import pi, sin
-from itertools import count
-from synth.components.envelopes import ADSREnvelope
-from synth.components.oscillators import WavetableOscillator,SineOscillator
-from synth.components.tables import SineTable,SawtoothTable,SquareTable,TriangleTable
 from synth.player import PolySynth
-
-# 1) Abrir MIDI
-port_name = "Launchkey Mini MK4 37 MIDI 0"
-inport = mido.open_input(port_name)
-
-# 2) Configurar audio
-SR = 44100
-p = pyaudio.PyAudio()
-stream = p.open(rate=SR, channels=1, format=pyaudio.paInt16,
-                output=True, frames_per_buffer=256,
-                output_device_index=4)  # ajustá tu índice
-
-# 3) Diccionario de voces activas
-voices = {}
-
-def midi_to_freq(m):
-    return 440.0 * 2 ** ((m - 69) / 12.0)
-
-table = SineTable(1024)
+from synth.components.oscillators.oscillators import SineOscillator,SquareOscillator,SawtoothOscillator,TriangleOscillator
+from synth.components.envelopes import ADSREnvelope
+from synth.components.modifiers import Panner,Clipper,ModulatedVolume,Volume,ModulatedPanner
+from synth.components.composers import WaveAdder,Chain 
 
 
-print("Arrancando main.py — Ctrl+C para salir")
-try:
-    while True:
-        # A) Leer MIDI y actualizar voces
-        for msg in inport.iter_pending():
-            if msg.type == 'note_on' and msg.velocity > 0:
-                freq = midi_to_freq(msg.note)
-                osc = iter(WavetableOscillator(wavetable = table, freq=freq, sample_rate=SR))
-                env = iter(ADSREnvelope(0.01, 0.1, 0.7, 0.3, sample_rate=SR))
-                voices[msg.note] = {'osc': osc, 'env': env}
-            elif msg.type in ('note_off',) or (msg.type=='note_on' and msg.velocity==0):
-                voices.pop(msg.note, None)
+def osc_func(freq, amp, sample_rate):
+    return SquareOscillator(freq=freq, amp=amp, sample_rate=sample_rate)
 
-        # B) Generar un bloque de audio
-        buf = np.zeros(256, dtype=np.int16)
-        for pair in list(voices.values()):
-            osc, env = pair['osc'], pair['env']
-            samples = np.fromiter((next(osc)*next(env) for _ in range(256)), float)
-            buf += (samples * 32767).astype(np.int16)
-        stream.write(buf.tobytes())
+def osc_function1(freq, amp, sample_rate):
+    return iter(
+        Chain(
+            TriangleOscillator(freq=freq, amp=amp, sample_rate=sample_rate),
+            ModulatedPanner(
+                SineOscillator(freq/100, phase=90, sample_rate=sample_rate)
+            ),
+            ModulatedVolume(ADSREnvelope(attack_duration=0.01,
+                                        decay_duration=0.1,
+                                        sustain_level=0.8,
+                                        release_duration=0.3,
+                                        sample_rate=sample_rate
+                                        ))
+        )
+    )
 
-except KeyboardInterrupt:
-    print("Deteniendo…")
-    stream.close()
-    p.terminate()
+def osc_function2(freq, amp, sample_rate):
+    return iter(
+        Chain(
+            WaveAdder(
+                Chain(
+                    SineOscillator(freq=freq+4, amp=amp, sample_rate=sample_rate),
+                    Panner(0.3)
+                ),
+                Chain(
+                    TriangleOscillator(freq=freq, amp=amp, sample_rate=sample_rate),
+                    Panner(0.7)
+                ),
+                Chain(
+                    SawtoothOscillator(freq=freq/2, amp=amp*0.1, sample_rate=sample_rate),
+                    Panner()
+                )
+            ),
+            ModulatedVolume(ADSREnvelope(0.01,0.2,0.9,0.001))
+        )
+    )
+
+def osc_simple(freq, amp, sample_rate):
+    """
+    Onda senoidal con envolvente ADSR:
+    attack=10ms, decay=100ms, sustain=80%, release=300ms.
+    """
+    return iter(
+        Chain(
+            SineOscillator(freq=freq, amp=amp, sample_rate=sample_rate),
+            ModulatedVolume(
+                ADSREnvelope(
+                    attack_duration=0.01,
+                    decay_duration=0.1,
+                    sustain_level=1.0,
+                    release_duration=0.3,
+                    sample_rate=sample_rate
+                )
+            )
+        )
+    )
+
+from synth.components.oscillators.oscillators import WavetableOscillator
+from synth.components.tables import SineTable, SawtoothTable
+
+sine_table     = SineTable(2048)
+sawtooth_table = SawtoothTable(2048)
+
+def osc_wavetable(freq, amp, sample_rate):
+    """
+    Un wavetable oscillator + ADSR, listo para PolySynth.
+    Usa sine_table que está en el scope exterior.
+    """
+    return iter(
+        Chain(
+            # 1) Wavetable base
+            WavetableOscillator(
+                wavetable   = sine_table,   # o sawtooth_table, o cualquier otra
+                freq        = freq,
+                amp         = amp,
+                sample_rate = sample_rate
+            ),
+            # 2) Una envolvente para tener dinámica
+            ModulatedVolume(
+                ADSREnvelope(
+                    attack_duration  = 0.005,
+                    decay_duration   = 0.1,
+                    sustain_level    = 0.7,
+                    release_duration = 0.3,
+                    sample_rate      = sample_rate
+                )
+            )
+        )
+    )
+
+
+synth = PolySynth(
+    port_name   = "Launchkey Mini MK4 37 MIDI 0", 
+    amp_scale   = 1.0,
+    max_amp     = 1.0,  
+    num_samples = 256    
+)
+
+synth.play(osc_wavetable)
+
+
+
