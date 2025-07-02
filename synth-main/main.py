@@ -3,110 +3,53 @@ from synth.components.oscillators.oscillators import SineOscillator,SquareOscill
 from synth.components.envelopes import ADSREnvelope
 from synth.components.modifiers import Panner,Clipper,ModulatedVolume,Volume,ModulatedPanner
 from synth.components.composers import WaveAdder,Chain 
+import numpy as np
+from synth.player import PolySynth
+from osc_functions import osc_wavetable
+import osc_functions
+
+CC_MAP = {
+    1:  'mod_wheel',
+    21: 'master_volume',
+    22: 'filter_cutoff',
+    23: 'adsr_attack',
+    24: 'adsr_decay',
+    25: 'adsr_sustain',
+    26: 'adsr_release',
+    27: 'wavetable_mix',
+    # …
+}
 
 
-def osc_func(freq, amp, sample_rate):
-    return SquareOscillator(freq=freq, amp=amp, sample_rate=sample_rate)
+# main.py
 
-def osc_function1(freq, amp, sample_rate):
-    return iter(
-        Chain(
-            TriangleOscillator(freq=freq, amp=amp, sample_rate=sample_rate),
-            ModulatedPanner(
-                SineOscillator(freq/100, phase=90, sample_rate=sample_rate)
-            ),
-            ModulatedVolume(ADSREnvelope(attack_duration=0.01,
-                                        decay_duration=0.1,
-                                        sustain_level=0.8,
-                                        release_duration=0.3,
-                                        sample_rate=sample_rate
-                                        ))
-        )
+class SynthParams:
+    def __init__(self):
+        self.mod_wheel      = 0.0
+        self.master_volume  = 1.0
+        self.filter_cutoff  = 5000.0  # Hz
+        self.adsr_attack    = 0.01
+        self.adsr_decay     = 0.1
+        self.adsr_sustain   = 0.8
+        self.adsr_release   = 0.3
+        self.wavetable_mix  = 0.0
+        # …
+
+
+
+if __name__ == "__main__":
+    params = SynthParams()
+
+    osc_functions.params = params
+
+    synth = PolySynth(
+        port_name   = "Launchkey Mini MK4 37 MIDI 0",
+        amp_scale   = 1.0,
+        max_amp     = 1.0,
+        sample_rate = 44100,
+        num_samples = 256,
+        cc_map      = CC_MAP,
+        params      = params
     )
 
-def osc_function2(freq, amp, sample_rate):
-    return iter(
-        Chain(
-            WaveAdder(
-                Chain(
-                    SineOscillator(freq=freq+4, amp=amp, sample_rate=sample_rate),
-                    Panner(0.3)
-                ),
-                Chain(
-                    TriangleOscillator(freq=freq, amp=amp, sample_rate=sample_rate),
-                    Panner(0.7)
-                ),
-                Chain(
-                    SawtoothOscillator(freq=freq/2, amp=amp*0.1, sample_rate=sample_rate),
-                    Panner()
-                )
-            ),
-            ModulatedVolume(ADSREnvelope(0.01,0.2,0.9,0.001))
-        )
-    )
-
-def osc_simple(freq, amp, sample_rate):
-    """
-    Onda senoidal con envolvente ADSR:
-    attack=10ms, decay=100ms, sustain=80%, release=300ms.
-    """
-    return iter(
-        Chain(
-            SineOscillator(freq=freq, amp=amp, sample_rate=sample_rate),
-            ModulatedVolume(
-                ADSREnvelope(
-                    attack_duration=0.01,
-                    decay_duration=0.1,
-                    sustain_level=1.0,
-                    release_duration=0.3,
-                    sample_rate=sample_rate
-                )
-            )
-        )
-    )
-
-from synth.components.oscillators.oscillators import WavetableOscillator
-from synth.components.tables import SineTable, SawtoothTable
-
-sine_table     = SineTable(2048)
-sawtooth_table = SawtoothTable(2048)
-
-def osc_wavetable(freq, amp, sample_rate):
-    """
-    Un wavetable oscillator + ADSR, listo para PolySynth.
-    Usa sine_table que está en el scope exterior.
-    """
-    return iter(
-        Chain(
-            # 1) Wavetable base
-            WavetableOscillator(
-                wavetable   = sine_table,   # o sawtooth_table, o cualquier otra
-                freq        = freq,
-                amp         = amp,
-                sample_rate = sample_rate
-            ),
-            # 2) Una envolvente para tener dinámica
-            ModulatedVolume(
-                ADSREnvelope(
-                    attack_duration  = 0.005,
-                    decay_duration   = 0.1,
-                    sustain_level    = 0.7,
-                    release_duration = 0.3,
-                    sample_rate      = sample_rate
-                )
-            )
-        )
-    )
-
-
-synth = PolySynth(
-    port_name   = "Launchkey Mini MK4 37 MIDI 0", 
-    amp_scale   = 1.0,
-    max_amp     = 1.0,  
-    num_samples = 256    
-)
-
-synth.play(osc_wavetable)
-
-
-
+    synth.play(osc_wavetable)

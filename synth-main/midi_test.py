@@ -1,67 +1,55 @@
-import pyaudio, numpy as np
-from math import pi, sin
-from pygame import midi
-from itertools import count
-from synth.components.envelopes import ADSREnvelope
+# ejemplo que obtuviste corriendo el debug
+CC_MAP = {
+    1: 'mod_wheel',
+    21: 'master_volume',
+    22: 'filter_cutoff',
+    23: 'adsr_attack',
+    24: 'adsr_decay',
+    25: 'adsr_sustain',
+    26: 'adsr_release',
+    27: 'wavetable_mix'
+    # tengo hasta el 38
+}
 
-midi.init()
-mi = midi.Input(device_id=midi.get_default_input_id())
+class SynthParams:
+    def __init__(self):
+        self.master_volume  = 1.0
+        self.filter_cutoff  = 5000.0
+        self.adsr_attack    = 0.01
+        self.adsr_decay     = 0.1
+        self.adsr_sustain   = 0.8
+        self.adsr_release   = 0.3
+        self.wavetable_mix  = 0.0
+        # …cualquier otro parámetro…
 
-p = pyaudio.PyAudio()
-st = p.open(
-    rate=44100, channels=1, format=pyaudio.paInt16,
-    output=True, frames_per_buffer=256,
-    output_device_index=4
-)
 
-nd = {}
-NOTE_ON, NOTE_OFF = 0x90, 0x80
 
-try:
-    print("🎹 Live synth con ADSR corriendo…")
-    while True:
-        # — Generación de audio —
-        if nd:
-            buf = np.zeros(256, dtype=np.int16)
-            for note, pair in list(nd.items()):
-                osc, env = pair['osc'], pair['env']
-                samples = []
-                for _ in range(256):
-                    amp = next(env)
-                    samples.append(int(next(osc) * amp * 32767))
-                buf[:len(samples)] += np.array(samples, dtype=np.int16)
-                if env.ended:
-                    nd.pop(note)
-            st.write(buf.tobytes())
 
-        # — Lectura MIDI —
-        if mi.poll():
-            for (status, note, vel, _), _ in mi.read(16):
-                event = status & 0xF0
+# en tu main.py…
+params = SynthParams()
 
-                # Note On
-                if event == NOTE_ON and vel > 0:
-                    freq = midi.midi_to_frequency(note)
-                    osc = (
-                        sin(c) * (vel/127.0)
-                        for c in count(0, 2*pi*freq/44100)
-                    )
-                    env = ADSREnvelope(
-                        attack_duration=0.05,
-                        decay_duration=0.1,
-                        sustain_level=0.8,
-                        release_duration=0.3,
-                        sample_rate=44100
-                    )
-                    next(env)
-                    nd[note] = {'osc': osc, 'env': env}
+# …en el método play(), justo al leer mensajes MIDI pendientes…
+for msg in self.inport.iter_pending():
+    if msg.type == 'control_change':
+        attr = CC_MAP.get(msg.control)
+        if attr:
+            norm = msg.value / 127.0
+            # adaptamos cada parámetro a un rango razonable:
+            if attr == 'master_volume':
+                params.master_volume = norm
+            elif attr == 'filter_cutoff':
+                # p.e. 200Hz – 10kHz
+                params.filter_cutoff = 200 + norm * (10000-200)
+            elif attr == 'adsr_attack':
+                params.adsr_attack = norm * 0.2        # 0–200ms
+            elif attr == 'adsr_decay':
+                params.adsr_decay  = norm * 0.5        # 0–500ms
+            elif attr == 'adsr_sustain':
+                params.adsr_sustain = norm              # 0–1
+            elif attr == 'adsr_release':
+                params.adsr_release = norm * 1.0       # 0–1s
+            elif attr == 'wavetable_mix':
+                params.wavetable_mix = norm            # 0–1
 
-                # Note Off
-                elif event == NOTE_OFF or (event == NOTE_ON and vel == 0):
-                    if note in nd:
-                        nd[note]['env'].trigger_release()
-
-except KeyboardInterrupt:
-    mi.close()
-    st.close()
-    p.terminate()
+            print(f"▶ Par {attr} → {getattr(params, attr):.3f}")
+    # luego tu lógica note_on/note_off…

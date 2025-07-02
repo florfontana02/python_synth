@@ -10,7 +10,9 @@ class PolySynth:
         amp_scale: float = 1.0,
         max_amp: float = 1.0,
         sample_rate: int = 44100,
-        num_samples: int = 256
+        num_samples: int = 256,
+        cc_map: dict = None,
+        params: object = None  
     ):
         # abrir midi
         available = mido.get_input_names()
@@ -22,6 +24,8 @@ class PolySynth:
         self.sample_rate = sample_rate
         self.amp_scale   = amp_scale
         self.max_amp     = max_amp
+        self.cc_map      = cc_map
+        self.params      = params
 
     def _init_stream(self, nchannels: int):
         self.stream = pyaudio.PyAudio().open(
@@ -30,7 +34,7 @@ class PolySynth:
             format=pyaudio.paInt16,
             output=True,
             frames_per_buffer=self.num_samples,
-            output_device_index=3 #indice de salida
+            output_device_index=5#indice de salida
         )
 
     def _get_samples2(self, notes_dict):
@@ -120,13 +124,23 @@ class PolySynth:
             while True:
                 # procesar todo el MIDI primero 
                 for msg in self.inport.iter_pending():
+                    if msg.type == 'control_change':
+                        attr = self.cc_map.get(msg.control)
+                        if attr and hasattr(self.params, attr):
+                            value = msg.value / 127.0
+                            # asigna de forma genérica
+                            setattr(self.params, attr, value)
+                            print(f"CC → {attr} = {value:.3f}")
                     if msg.type == 'note_on' and msg.velocity > 0:
                         freq    = self.midi_to_freq(msg.note)
-                        raw_osc = osc_function(freq=freq,
-                                               amp=msg.velocity/127.0,
-                                               sample_rate=self.sample_rate)
+                        raw_osc = osc_function(
+                                                freq=freq,
+                                                amp=msg.velocity / 127.0,
+                                                sample_rate=self.sample_rate
+                                            )
                         osc_iter = iter(raw_osc)
                         notes_dict[msg.note] = [osc_iter, False]
+                        #print(f"→ NOTE_ON: nota={msg.note} vel={msg.velocity}")
 
                     elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
                         if msg.note in notes_dict:
