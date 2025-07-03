@@ -102,19 +102,19 @@ class WavetableOscillator(Oscillator):
             self._pos = 0.0
 
     def __next__(self):
-        # Índices entero y siguiente, con wrap
+        # indices entero y siguiente, con wrap
         i0   = int(self._pos) % self._N
         i1   = (i0 + 1) % self._N
         frac = self._pos - int(self._pos)
-        # Interpolación lineal
+        # interpolación lineal
         v0 = self.wavetable[i0]
         v1 = self.wavetable[i1]
         val = (1 - frac) * v0 + frac * v1
 
-        # Avanzar posición
+        # avanzar posición
         self._pos = (self._pos + self._step) % self._N
 
-        # Aplicar rango y amplitud
+        # aplicar rango y amplitud
         if self._wave_range != (-1, 1):
             val = self.squish_val(val, *self._wave_range)
         return val * self.amp

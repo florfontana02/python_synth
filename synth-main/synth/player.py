@@ -33,63 +33,36 @@ class PolySynth:
             output_device_index=3 #indice de salida
         )
 
-    def _get_samples2(self, notes_dict):
-        """
-        notes_dict: {note: [osc_generator, released_flag]}
-        devuelve un array (num_samples, nchannels) en int16
-        """
-        if not notes_dict:
-            # si no hay voces, devuelvo silencio mono
-            return np.zeros((self.num_samples, 1), dtype=np.int16)
 
-        # lista de iteradores
-        oscs = [o[0] for o in notes_dict.values()]
-
-        # stack de voces y suma para cada muestra
-        frames = []
-        for _ in range(self.num_samples):
-            samp = [next(osc) for osc in oscs]
-            arr = np.stack(samp, axis=0)       # shape (n_voices,) or (n_voices, nch)
-            summed = np.sum(arr, axis=0) * self.amp_scale
-            frames.append(summed)
-
-        # convierto a numpy
-        out = np.vstack(frames)
-        # si mono (shape (N,)), forzamos (N,1)
-        if out.ndim == 1:
-            out = out[:, None]
-
-        # clip y pasar a int16
-        out = np.clip(out, -self.max_amp, self.max_amp)
-        out = (out * 32767).astype(np.int16)
-        return out
 
     def _get_samples(self, notes_dict):
-        N = self.num_samples
-        oscs = [ osc for osc,_ in notes_dict.values() ]
+            """
+            notes_dict: {note: [osc_generator, released_flag]}
+            Devuelve un array (num_samples, nchannels) en int16, soportando mono o estéreo.
+            """
+            N = self.num_samples
+            # si no hay voces, silencio mono
+            if not notes_dict:
+                return np.zeros((N, 1), dtype=np.int16)
 
-        if not oscs:
-            mix = np.zeros(N, dtype=float)
-        else:
-            # genero de una vez el bloque de N muestras para cada oscilador
+            # extraer bloques por voz
             blocks = []
-            for osc in oscs:
-                # extrae N muestras seguidas
-                block = np.fromiter((next(osc) for _ in range(N)), float)
-                blocks.append(block)
+            for osc, _ in notes_dict.values():
+                # generar N muestras de este oscilador
+                samp = [next(osc) for _ in range(N)]
+                arr = np.array(samp)
+                # si es mono (1D), convertir a (N,1); si es tupla/estéreo, np.array crea (N,2)
+                if arr.ndim == 1:
+                    arr = arr[:, None]
+                blocks.append(arr)
 
-            # apilo todos los bloques en un array (M voces × N muestras)
-            stacked = np.stack(blocks, axis=0)    # shape (M, N)
+            # mezclar voces (sumar en el eje 0)
+            mix = np.sum(np.stack(blocks, axis=0), axis=0) * self.amp_scale
 
-            # sumo en el eje 0 → mezclo voces y escalo de una
-            mix = np.sum(stacked, axis=0) * self.amp_scale  # shape (N,)
-
-        # clip y convertir a int16
-        mix = np.clip(mix, -self.max_amp, self.max_amp)
-        buf = (mix * 32767).astype(np.int16)
-
-        # asegurar forma (N,1) para mono
-        return buf.reshape(N, 1)
+            # clippear y convertir a int16
+            mix = np.clip(mix, -self.max_amp, self.max_amp)
+            mix = (mix * 32767).astype(np.int16)
+            return mix
 
 
 
